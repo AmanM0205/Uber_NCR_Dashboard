@@ -1,138 +1,97 @@
-# Uber NCR 2024 — Dynamic Ride Analytics Dashboard (Tableau)
+# Uber NCR Ride Analytics (Tableau)
 
-An interactive Tableau dashboard built on **150,000 real-format Uber ride bookings from the Delhi-NCR region of India (Jan–Dec 2024)**. It answers: *how much demand is there, when and where does it peak, how much revenue is earned, and why do a third of rides fail?*
+A two-page Tableau dashboard built on 150,000 Uber booking requests from Delhi-NCR, January to December 2024. I wanted to answer four questions with it: how much demand there is, when and where it peaks, how much money the completed rides bring in, and why more than a third of requests never turn into a paid trip.
 
 ![Ride Overview dashboard](images/ride_overview.png)
 
-## Dataset
+![Cancellations & Ops dashboard](images/cancellations.png)
+
+## What's in it
+
+**Ride Overview**
+- Six headline numbers: total bookings, completed rides, completion rate, revenue, average fare, average trip distance
+- Monthly trend for whichever metric is selected
+- Booking status mix (completed, cancelled by driver, cancelled by customer, no driver found, incomplete)
+- Metric by vehicle type
+- Weekday × hour demand heatmap
+- Top 10 pickup locations
+
+**Cancellations & Ops**
+- Cancellation rate, driver and customer cancels, no-driver-found rate, average pickup ETA, average driver rating
+- Lost rides by stated reason, coloured by who cancelled
+- Booking outcome by time of day
+- Revenue by payment method and by trip distance
+- Driver rating by vehicle type
+
+Five dropdowns sit at the top of both pages: Metric, Month, Vehicle Type, Time Slot and Pickup Location. They're Tableau parameters wired into a single boolean calculated field (`Dashboard Filter`) that every sheet filters on, so one change updates both pages. The Metric dropdown switches the trend, vehicle, heatmap and top-10 charts between bookings, completed rides, revenue, average fare and completion rate. Clicking a bar in most charts filters the rest of that page.
+
+## Numbers to expect (no filters)
 
 | | |
 |---|---|
-| Name | Uber Ride Analytics Dashboard — `ncr_ride_bookings.csv` |
-| Origin | Kaggle ("Uber Ride Analytics 2024", NCR bookings); downloaded from the GitHub mirror [aymen016/uber-analytics-dashboard](https://github.com/aymen016/uber-analytics-dashboard) |
-| Size | 150,000 rows × 21 columns, 176 pickup locations, 7 vehicle types |
-| Grain | One booking request (completed, cancelled, incomplete or no driver found) |
+| Bookings | 150,000 |
+| Completed rides | 93,000 (62.0%) |
+| Revenue | ₹47.26 M |
+| Average fare | ₹508 |
+| Average trip distance | 24.6 km |
+| Cancelled by driver / customer | 18.0% / 7.0% |
+| No driver found | 7.0% |
+| Average pickup ETA | 8.5 min |
+| Average driver rating | 4.23 |
 
-Note: the dataset reflects Uber's NCR operations, but parts of it were simulated by its Kaggle publisher (for example, cancellation shares are perfectly round numbers). Describe it as a "realistic Uber NCR dataset", not as official Uber data.
+## What the data shows
 
-## Project structure
+- Only 62% of requests end as a paid ride. Drivers cancel 2.6 times as often as customers do (18% against 7%), so the bigger problem sits on the supply side.
+- The four driver-side reasons ("customer related issue", "customer was coughing/sick", "personal & car related issues", "more than permitted people") account for 27,000 lost rides between them.
+- Demand builds through the afternoon and peaks between 5 and 8 PM. 6 PM is the busiest hour, with about 12,400 bookings.
+- Auto earns the most (₹11.7 M), followed by Go Mini (₹9.4 M) and Go Sedan (₹8.5 M). Uber XL is a small niche at ₹1.4 M.
+- UPI is the most common way to pay, well ahead of cash, wallet and cards.
+- Revenue is spread evenly across the city. The top pickup points (Barakhamba Road, Khandsa, Pataudi Chowk) each bring in around ₹0.31 M.
 
-```
-uber-ncr-dashboard/
-├── data/
-│   ├── raw/ncr_ride_bookings.csv        # original download
-│   ├── clean/uber_rides_clean.csv       # output of clean_data.py (36 columns, git-ignored)
-│   └── extract/uber_rides.hyper         # Tableau extract (git-ignored)
-├── images/ride_overview.png             # dashboard screenshot
-├── scripts/
-│   ├── clean_data.py                    # cleaning + feature engineering (pandas)
-│   └── build_workbook.py                # builds the .hyper extract + Tableau workbook XML
-└── tableau/
-    ├── Uber_NCR_Dashboard.twbx          # packaged workbook (data inside) ← open this
-    └── Uber_NCR_Dashboard.twb           # same workbook, points at data/extract/
-```
+## Data
 
-Rebuild everything with:
+`ncr_ride_bookings.csv` from the Kaggle dataset "Uber Ride Analytics 2024", downloaded from the GitHub mirror [aymen016/uber-analytics-dashboard](https://github.com/aymen016/uber-analytics-dashboard). It has 150,000 rows and 21 columns, with one row per booking request, 176 pickup locations and 7 vehicle types.
+
+The dataset is realistic but not official Uber data. Parts of it were simulated by the person who published it, which is why some of the shares come out as perfectly round numbers.
+
+## Cleaning (`scripts/clean_data.py`)
+
+- Stripped the literal quotes around `Booking ID` and `Customer ID` (`"""CNR5884300"""` became `CNR5884300`).
+- Booking IDs turned out not to be unique (1,233 IDs are shared by different trips), so I added a `Ride Key` row ID.
+- Added time fields: `Month`, `Weekday`, `Hour`, five `Time Slot` buckets and `Is Weekend`.
+- Added 0/1 outcome flags (`Is Completed`, `Is Cancelled Driver` and so on) so rates are simple sums in Tableau.
+- `Revenue` counts completed rides only. Incomplete rides carry a fare in the raw data, but that money was never earned.
+- Merged the customer, driver and incomplete reason columns into one `Failure Reason` column.
+- Grouped trips into distance bands (0-5, 5-10, 10-20, 20-35, 35-50 km) and set `Payment Method` to "Not Paid" where no payment happened.
+
+## How the workbook is built
+
+I didn't build the workbook by hand. `scripts/build_workbook.py` writes the cleaned data into a `.hyper` extract with Tableau's Hyper API, then generates the workbook XML: calculated fields, parameters, sheets, both dashboard layouts, filter actions and the colour theme. Tableau Public only accepts extract data sources, which is why the extract step is there. Keeping it all in a script means any change to the layout or colours is a code change I can rebuild and diff.
+
+## Running it
+
 ```bash
 pip install -r requirements.txt
 python scripts/clean_data.py
 python scripts/build_workbook.py
 ```
 
-## Opening the dashboard
+Then open `tableau/Uber_NCR_Dashboard.twbx` in [Tableau Public](https://public.tableau.com/app/discover) (free; I used version 2026.3) or Tableau Desktop. The `.twbx` file has the data packed inside, so it opens on any machine without running the scripts first. The dashboards size themselves to the window. Press F7 in Tableau for full-screen presentation mode.
 
-Open `tableau/Uber_NCR_Dashboard.twbx` in **Tableau Public** (free, tested on version 2026.3) or in Tableau Desktop.
-- Download Tableau Public at https://public.tableau.com/app/discover → *Create → Download Tableau Public*.
-- To share the dashboard, choose *File → Save to Tableau Public*, then put the link on your CV or LinkedIn.
+## Project layout
 
-Tableau Public accepts only extract data sources, so `build_workbook.py` writes the data into a `.hyper` extract with Tableau's Hyper API and packs it into the `.twbx`.
-
-## Data cleaning (`clean_data.py`)
-
-- Stripped literal quotes from `Booking ID` / `Customer ID` (`"""CNR5884300"""` → `CNR5884300`)
-- Booking IDs are **not unique** (1,233 collisions between different trips), so a `Ride Key` row id was added
-- Time features: `Month` (`01-Jan`…), `Weekday`, `Hour`, `Time Slot` (5 day-parts), `Is Weekend`
-- Outcome flags for rate maths: `Ride Count`, `Is Completed`, `Is Cancelled Customer`, `Is Cancelled Driver`, `Is No Driver`, `Is Incomplete`
-- `Revenue` = booking value of **completed** rides only (incomplete rides also carry a fare in the source)
-- `Failure Reason` = one column combining customer, driver and incomplete reasons plus "No Driver Found"
-- `Distance Band` (0-5, 5-10, 10-20, 20-35, 35-50 km); unpaid bookings get `Payment Method = "Not Paid"`
-
-## What makes it dynamic
-
-| Feature | How it works |
-|---|---|
-| **Global dropdown filters**: Month, Vehicle Type, Time Slot, Pickup Location | Parameters feed one boolean calc, `Dashboard Filter`, which is applied to every sheet, so one choice updates both dashboards |
-| **Metric switcher**: Bookings / Completed Rides / Revenue / Avg Fare / Completion Rate % | `Selected Metric` calc (a `CASE` on the parameter) drives the trend line, vehicle bars, heatmap and Top-10 pickups |
-| **Click-to-filter** | Dashboard filter actions: click a bar in Booking Status, Vehicle Type, Monthly Trend, Rating or Payment Method to filter the rest of that dashboard |
-| **Top-10 pickups** | Top-N filter ranked by whichever metric is selected |
-
-### Dashboard 1 — Ride Overview
-KPI tiles: Total Bookings · Completed Rides · Completion Rate · Revenue (₹ M) · Avg Fare · Avg Ride Distance
-Charts: Monthly Trend (selected metric) · Booking Status Mix · Selected Metric by Vehicle Type · Demand Heatmap (Weekday × Hour) · Top 10 Pickup Locations
-
-### Dashboard 2 — Cancellations & Operations
-KPI tiles: Cancellation Rate · Driver Cancel Rate · Customer Cancel Rate · No Driver Found Rate · Avg Pickup ETA · Avg Driver Rating
-Charts: Why Rides Fail (reason × status) · Booking Outcome by Time Slot · Revenue by Payment Method · Avg Driver Rating by Vehicle · Revenue by Distance Band
-
-## Expected values (no filters applied) — use these to check the dashboard
-
-| KPI | Value |
-|---|---|
-| Total bookings | 150,000 |
-| Completed rides | 93,000 |
-| Completion rate | 62.0% |
-| Revenue | ₹47.26 M |
-| Avg fare (completed) | ₹508 |
-| Avg ride distance | 24.6 km |
-| Cancellation rate | 25.0% (driver 18.0%, customer 7.0%) |
-| No driver found | 7.0% |
-| Avg pickup ETA (VTAT) | 8.5 min |
-| Avg driver rating | 4.23 |
-
-## Key insights
-
-1. **Only 62% of booking requests become paid rides.** Driver cancellations (18%) cause 2.6× more lost rides than customer cancellations (7%).
-2. **Demand peaks from 5–8 PM.** 6 PM alone has 12.4k bookings, the busiest hour of the day.
-3. **Auto is the revenue leader** (₹11.7 M), ahead of Go Mini (₹9.4 M) and Go Sedan (₹8.5 M). Uber XL is a small niche (₹1.4 M).
-4. **Driver-side reasons** ("customer related issue", "customer was coughing/sick", "personal & car issues", "more than permitted people") account for 27k lost rides, so they are the main thing to fix for ops.
-5. **UPI is the main payment method**, ahead of cash, wallet and cards.
-6. Revenue is spread evenly across pickup areas: the top locations (Barakhamba Road, Khandsa, Pataudi Chowk) each earn about ₹0.31 M.
-
-## Manual build (fallback, Tableau Public / Desktop)
-
-1. **Connect**: Text file → `data/clean/uber_rides_clean.csv`. Right-click `Hour`, `Month Num`, `Weekday Num`, `Ride Key` → *Convert to Dimension*.
-2. **Parameters** (string, list): `Metric` = Bookings, Completed Rides, Revenue (INR), Avg Fare (INR), Completion Rate % · `Month` / `Vehicle Type` / `Time Slot` / `Pickup Location` = "All" + *Add values from field*. Right-click each → *Show Parameter*.
-3. **Calculated fields**
-   ```
-   Dashboard Filter  = ([Month Param]="All" OR [Month]=[Month Param])
-                       AND ([Vehicle Param]="All" OR [Vehicle Type]=[Vehicle Param])
-                       AND ([Time Slot Param]="All" OR [Time Slot]=[Time Slot Param])
-                       AND ([Pickup Param]="All" OR [Pickup Location]=[Pickup Param])
-   Selected Metric   = CASE [Metric]
-                         WHEN "Bookings" THEN SUM([Ride Count])
-                         WHEN "Completed Rides" THEN SUM([Is Completed])
-                         WHEN "Revenue (INR)" THEN SUM([Revenue])
-                         WHEN "Avg Fare (INR)" THEN SUM([Revenue]) / SUM([Is Completed])
-                         WHEN "Completion Rate %" THEN 100 * SUM([Is Completed]) / SUM([Ride Count])
-                       END
-   Completion Rate   = SUM([Is Completed]) / SUM([Ride Count])                  (format %)
-   Revenue (INR M)   = SUM([Revenue]) / 1000000
-   Avg Fare (INR)    = SUM([Revenue]) / SUM([Is Completed])
-   Cancellation Rate = (SUM([Is Cancelled Customer]) + SUM([Is Cancelled Driver])) / SUM([Ride Count])
-   Driver Cancel Rate   = SUM([Is Cancelled Driver]) / SUM([Ride Count])
-   Customer Cancel Rate = SUM([Is Cancelled Customer]) / SUM([Ride Count])
-   No Driver Found Rate = SUM([Is No Driver]) / SUM([Ride Count])
-   Has Failure Reason   = NOT ISNULL([Failure Reason])
-   ```
-4. **Sheets**: put `Dashboard Filter` = True on Filters in each sheet, or do it once and choose *Apply to Worksheets → All using this data source*.
-   - KPI tiles: drag the measure onto *Text*, set font size 26 bold.
-   - Monthly Trend: `Month` → Columns, `Selected Metric` → Rows, mark = Line, show labels.
-   - Booking Status Mix: `Booking Status` → Rows, `SUM(Ride Count)` → Columns, `Booking Status` → Color.
-   - Vehicle Type: `Vehicle Type` → Rows, `Selected Metric` → Columns, sort descending.
-   - Heatmap: `Weekday` → Rows (manual sort Mon→Sun), `Hour` → Columns, `Selected Metric` → Color, mark = Square.
-   - Top 10 Pickup: `Pickup Location` → Rows, `Selected Metric` → Columns, Filter → Top → By field: Top 10 by `Selected Metric`.
-   - Why Rides Fail: `Failure Reason` → Rows, `SUM(Ride Count)` → Columns, `Booking Status` → Color, filter `Has Failure Reason` = True.
-   - Outcome by Time Slot: `Time Slot` → Rows, `SUM(Ride Count)` → Columns, `Booking Status` → Color (stacked).
-   - Payment / Rating / Distance band: simple bar charts as described in the dashboard list above.
-5. **Dashboards**: size 1400 × 900. Add a black title bar, the parameter controls row, the KPI row and two chart rows. Under *Dashboard → Actions → Add Filter action*, set Source = bar charts, Target = all sheets, Run on = Select.
-6. **Colors**: Completed `#06C167`, Cancelled by Driver `#E11900`, Cancelled by Customer `#FF6937`, No Driver Found `#8F8F8F`, Incomplete `#FFC043`. Use black for single-colour bars.
+```
+uber-ncr-dashboard/
+├── data/
+│   ├── raw/ncr_ride_bookings.csv     original download
+│   ├── clean/                        output of clean_data.py (not committed)
+│   └── extract/                      .hyper extract (not committed)
+├── images/                           dashboard screenshots
+├── scripts/
+│   ├── clean_data.py
+│   └── build_workbook.py
+├── tableau/
+│   ├── Uber_NCR_Dashboard.twbx       packaged workbook, open this one
+│   └── Uber_NCR_Dashboard.twb        same workbook, reads data/extract/
+└── requirements.txt
+```

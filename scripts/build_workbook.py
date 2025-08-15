@@ -27,14 +27,31 @@ DS = "federated.uber01"
 DS_CAPTION = "Uber NCR Rides"
 W, H = 1400, 900  # dashboard size in px
 
-BLACK, GREEN, GREY = "#000000", "#06C167", "#545454"
+# Presentation theme: navy stage, dark cards, one bright accent per chart.
+NAVY, CARD, LINE = "#0A0F24", "#121A3B", "#2A3566"
+FG, MUTED, INK = "#F5F7FF", "#AEB6DD", "#0A0F24"
+TEAL, CYAN, VIOLET, PINK = "#2DD4BF", "#38BDF8", "#A78BFA", "#F472B6"
+CORAL, ORANGE, AMBER, GREEN, BLUE = "#FB7185", "#FB923C", "#FBBF24", "#34D399", "#60A5FA"
+CTRL_BG = TEAL  # one colour for every dropdown strip; dark labels stay readable on it
 STATUS_COLORS = {
-    "Completed": "#06C167",
-    "Cancelled by Driver": "#E11900",
-    "Cancelled by Customer": "#FF6937",
-    "No Driver Found": "#8F8F8F",
-    "Incomplete": "#FFC043",
+    "Completed": GREEN,
+    "Cancelled by Driver": CORAL,
+    "Cancelled by Customer": ORANGE,
+    "No Driver Found": "#94A3B8",
+    "Incomplete": AMBER,
 }
+VEHICLE_COLORS = {
+    "Auto": CYAN, "Go Mini": VIOLET, "Go Sedan": PINK, "Bike": AMBER,
+    "Premier Sedan": GREEN, "eBike": ORANGE, "Uber XL": BLUE,
+}
+PAYMENT_COLORS = {"UPI": CYAN, "Cash": GREEN, "Uber Wallet": VIOLET, "Credit Card": PINK, "Debit Card": AMBER}
+BAND_COLORS = {"0-5 km": "#FDE047", "5-10 km": AMBER, "10-20 km": ORANGE, "20-35 km": PINK, "35-50 km": VIOLET}
+# Continuous ramps (low -> high) for colour-by-value charts.
+RAMP_HEAT = ["#3B5BDB", "#2563EB", "#7C3AED", "#DB2777", "#F59E0B"]
+RAMP_TEAL = ["#155E75", TEAL, CYAN, VIOLET]
+RAMP_PINK = ["#7C2D5B", PINK, ORANGE]
+KPI_COLORS_1 = [TEAL, GREEN, VIOLET, AMBER, PINK, BLUE]
+KPI_COLORS_2 = [CORAL, "#F87171", ORANGE, "#94A3B8", "#22D3EE", "#FDE047"]
 
 
 def q(value: str) -> str:
@@ -145,27 +162,31 @@ CALCS = {
         "SUM([Revenue]) / SUM([Is Completed])", '*"₹"#,##0', ["Revenue", "Is Completed"],
     ),
     "Calculation_cancel": (
-        "Cancellation Rate", "real", "measure", "quantitative",
+        "Cancel Rate", "real", "measure", "quantitative",
         "(SUM([Is Cancelled Customer]) + SUM([Is Cancelled Driver])) / SUM([Ride Count])",
         "p0.0%", ["Is Cancelled Customer", "Is Cancelled Driver", "Ride Count"],
     ),
     "Calculation_dcancel": (
-        "Driver Cancel Rate", "real", "measure", "quantitative",
+        "Driver Cancels", "real", "measure", "quantitative",
         "SUM([Is Cancelled Driver]) / SUM([Ride Count])", "p0.0%",
         ["Is Cancelled Driver", "Ride Count"],
     ),
     "Calculation_ccancel": (
-        "Customer Cancel Rate", "real", "measure", "quantitative",
+        "Customer Cancels", "real", "measure", "quantitative",
         "SUM([Is Cancelled Customer]) / SUM([Ride Count])", "p0.0%",
         ["Is Cancelled Customer", "Ride Count"],
     ),
     "Calculation_nodriver": (
-        "No Driver Found Rate", "real", "measure", "quantitative",
+        "No Driver Found", "real", "measure", "quantitative",
         "SUM([Is No Driver]) / SUM([Ride Count])", "p0.0%", ["Is No Driver", "Ride Count"],
     ),
     "Calculation_hasfail": (
         "Has Failure Reason", "boolean", "dimension", "nominal",
         "NOT ISNULL([Failure Reason])", None, ["Failure Reason"],
+    ),
+    "Calculation_hasband": (
+        "Has Distance Band", "boolean", "dimension", "nominal",
+        "NOT ISNULL([Distance Band])", None, ["Distance Band"],
     ),
     "Calculation_paid": (
         "Is Paid", "boolean", "dimension", "nominal",
@@ -266,9 +287,18 @@ def top_filter(inst: Inst, by_formula: str, n: int) -> str:
     )
 
 
+def ramp_encoding(inst: Inst, colors) -> str:
+    """Continuous colour encoding with a custom low->high palette."""
+    cs = "".join(f"<color>{c}</color>" for c in colors)
+    return (f"<encoding attr='color' field='{inst.ref}' type='custom-interpolated'>"
+            f"<color-palette custom='true' name='' type='ordered-sequential'>{cs}</color-palette>"
+            "</encoding>")
+
+
 def worksheet(name, *, rows=None, cols=None, mark="Bar", color=None, text=None,
               labels=False, mark_color=None, sort=None, manual_sort=None,
-              extra_filters=(), extra_slices=(), kpi=None):
+              extra_filters=(), extra_slices=(), kpi=None, accent=CYAN, ramp=None,
+              kpi_bg=TEAL, mark_border=None):
     """Build one <worksheet>. rows/cols/color/text are Inst objects."""
     insts = [i for i in (rows, cols, color, text, kpi, FILTER) if i is not None]
     insts += [i for i, _ in extra_filters]
@@ -315,20 +345,49 @@ def worksheet(name, *, rows=None, cols=None, mark="Bar", color=None, text=None,
         mark_rules += "<format attr='mark-labels-show' value='true' />"
     if mark_color:
         mark_rules += f"<format attr='mark-color' value='{mark_color}' />"
-    title_xml, table_style = "", "<style />"
+    if mark_border:
+        mark_rules += f"<format attr='stroke-color' value='{mark_border}' />"
     if kpi:
-        # Small grey title above a big centred number.
+        # Bold title above a big centred number, all on a bright tile.
         mark = "Text"
         title_xml = (
             "<layout-options><title><formatted-text>"
-            f"<run fontcolor='{GREY}' fontsize='10'>{escape(name)}</run>"
+            f"<run bold='true' fontcolor='{INK}' fontsize='10'>{escape(name)}</run>"
             "</formatted-text></title></layout-options>"
         )
         table_style = (
-            "<style><style-rule element='cell'>"
-            f"<format attr='color' value='{BLACK}' /><format attr='font-size' value='20' />"
+            "<style>"
+            f"<style-rule element='table'><format attr='background-color' value='{kpi_bg}' /></style-rule>"
+            f"<style-rule element='title'><format attr='background-color' value='{kpi_bg}' /></style-rule>"
+            "<style-rule element='cell'>"
+            f"<format attr='color' value='{INK}' /><format attr='font-size' value='24' />"
             "<format attr='font-weight' value='bold' /><format attr='text-align' value='center' />"
             "</style-rule></style>"
+        )
+    else:
+        # Coloured square + white title on a dark card; light axis text, no gridlines.
+        title_xml = (
+            "<layout-options><title><formatted-text>"
+            f"<run fontcolor='{accent}' fontsize='14'>■  </run>"
+            f"<run bold='true' fontcolor='{FG}' fontsize='13'>{escape(name)}</run>"
+            "</formatted-text></title></layout-options>"
+        )
+        table_style = (
+            "<style>"
+            f"<style-rule element='worksheet'><format attr='color' value='{MUTED}' /></style-rule>"
+            f"<style-rule element='table'><format attr='background-color' value='{CARD}' /></style-rule>"
+            f"<style-rule element='title'><format attr='background-color' value='{CARD}' /></style-rule>"
+            f"<style-rule element='header'><format attr='color' value='{FG}' /></style-rule>"
+            f"<style-rule element='label'><format attr='color' value='{FG}' /></style-rule>"
+            f"<style-rule element='gridline'><format attr='line-visibility' value='off' /></style-rule>"
+            + (f"<style-rule element='mark'>{ramp_encoding(color, ramp)}</style-rule>" if ramp and color else "")
+            + (("<style-rule element='table-div'>"
+                + "".join(f"<format attr='{a}' scope='{sc}' value='{v}' />"
+                          for sc in ("rows", "cols")
+                          for a, v in (("stroke-color", mark_border), ("stroke-size", "3"),
+                                       ("line-visibility", "on"), ("div-level", "1")))
+                + "</style-rule>") if mark_border else "")
+            + "</style>"
         )
     pane_style = (f"<style><style-rule element='mark'>{mark_rules}</style-rule></style>"
                   if mark_rules else "")
@@ -367,7 +426,14 @@ def worksheet(name, *, rows=None, cols=None, mark="Bar", color=None, text=None,
 WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 FAIL = dim("Calculation_hasfail")
 PAID = dim("Calculation_paid")
+BAND_OK = dim("Calculation_hasband")
 PICKUP = dim("Pickup Location")
+
+KPI1 = ["Total Bookings", "Completed Rides", "Completion Rate", "Revenue", "Avg Fare",
+        "Avg Distance km"]
+KPI2 = ["Cancel Rate", "Driver Cancels", "Customer Cancels", "No Driver Found",
+        "Pickup ETA (min)", "Avg Driver Rating"]
+KPI_BG = {**dict(zip(KPI1, KPI_COLORS_1)), **dict(zip(KPI2, KPI_COLORS_2))}
 
 SHEETS = {
     # ---- Dashboard 1 KPIs
@@ -376,47 +442,50 @@ SHEETS = {
     "Completion Rate": dict(kpi=calc("Calculation_compl")),
     "Revenue": dict(kpi=calc("Calculation_revm")),
     "Avg Fare": dict(kpi=calc("Calculation_fare")),
-    "Avg Ride Distance (km)": dict(kpi=mean("Ride Distance")),
+    "Avg Distance km": dict(kpi=mean("Ride Distance")),
     # ---- Dashboard 1 charts
     "Monthly Trend (Selected Metric)": dict(
-        cols=dim("Month", "ok"), rows=METRIC, mark="Line", mark_color=BLACK),
+        cols=dim("Month", "ok"), rows=METRIC, color=METRIC, ramp=RAMP_TEAL, labels=True, accent=TEAL),
     "Booking Status Mix": dict(
         rows=dim("Booking Status"), cols=RIDES, color=dim("Booking Status"), labels=True,
-        sort=(dim("Booking Status"), RIDES, "DESC")),
+        sort=(dim("Booking Status"), RIDES, "DESC"), accent=GREEN),
     "Selected Metric by Vehicle Type": dict(
-        rows=dim("Vehicle Type"), cols=METRIC, labels=True, mark_color=BLACK,
-        sort=(dim("Vehicle Type"), METRIC, "DESC")),
+        rows=dim("Vehicle Type"), cols=METRIC, color=dim("Vehicle Type"), labels=True,
+        sort=(dim("Vehicle Type"), METRIC, "DESC"), accent=BLUE),
     "Demand Heatmap (Weekday x Hour)": dict(
-        rows=dim("Weekday"), cols=dim("Hour", "ok"), mark="Square", color=METRIC,
-        manual_sort=(dim("Weekday"), WEEKDAYS)),
+        rows=dim("Weekday"), cols=dim("Hour", "ok"), mark="Square", color=METRIC, ramp=RAMP_HEAT,
+        manual_sort=(dim("Weekday"), WEEKDAYS), accent=VIOLET, mark_border=NAVY),
     "Top 10 Pickup Locations": dict(
-        rows=PICKUP, cols=METRIC, labels=True, mark_color=GREEN,
-        sort=(PICKUP, METRIC, "DESC"),
+        rows=PICKUP, cols=METRIC, color=METRIC, ramp=RAMP_PINK, labels=True,
+        sort=(PICKUP, METRIC, "DESC"), accent=PINK,
         extra_filters=[(PICKUP, top_filter(PICKUP, "[Calculation_metric]", 10))]),
     # ---- Dashboard 2 KPIs
-    "Cancellation Rate": dict(kpi=calc("Calculation_cancel")),
-    "Driver Cancel Rate": dict(kpi=calc("Calculation_dcancel")),
-    "Customer Cancel Rate": dict(kpi=calc("Calculation_ccancel")),
-    "No Driver Found Rate": dict(kpi=calc("Calculation_nodriver")),
-    "Avg Pickup ETA (min)": dict(kpi=mean("Avg VTAT")),
+    "Cancel Rate": dict(kpi=calc("Calculation_cancel")),
+    "Driver Cancels": dict(kpi=calc("Calculation_dcancel")),
+    "Customer Cancels": dict(kpi=calc("Calculation_ccancel")),
+    "No Driver Found": dict(kpi=calc("Calculation_nodriver")),
+    "Pickup ETA (min)": dict(kpi=mean("Avg VTAT")),
     "Avg Driver Rating": dict(kpi=mean("Driver Ratings")),
     # ---- Dashboard 2 charts
     "Why Rides Fail": dict(
         rows=dim("Failure Reason"), cols=RIDES, color=dim("Booking Status"), labels=True,
-        sort=(dim("Failure Reason"), RIDES, "DESC"),
+        sort=(dim("Failure Reason"), RIDES, "DESC"), accent=CORAL,
         extra_filters=[(FAIL, member_filter(FAIL))]),
     "Booking Outcome by Time Slot": dict(
-        rows=dim("Time Slot"), cols=RIDES, color=dim("Booking Status")),
+        rows=dim("Time Slot"), cols=RIDES, color=dim("Booking Status"), accent=AMBER),
     "Revenue by Payment Method": dict(
-        rows=dim("Payment Method"), cols=total("Revenue"), labels=True, mark_color=BLACK,
-        sort=(dim("Payment Method"), total("Revenue"), "DESC"),
+        rows=dim("Payment Method"), cols=total("Revenue"), color=dim("Payment Method"), labels=True,
+        sort=(dim("Payment Method"), total("Revenue"), "DESC"), accent=CYAN,
         extra_filters=[(PAID, member_filter(PAID))]),
     "Avg Driver Rating by Vehicle": dict(
-        rows=dim("Vehicle Type"), cols=mean("Driver Ratings"), labels=True, mark_color=GREY,
-        sort=(dim("Vehicle Type"), mean("Driver Ratings"), "DESC")),
+        rows=dim("Vehicle Type"), cols=mean("Driver Ratings"), labels=True, mark_color=AMBER,
+        sort=(dim("Vehicle Type"), mean("Driver Ratings"), "DESC"), accent=GREEN),
     "Revenue by Distance Band": dict(
-        cols=dim("Distance Band"), rows=total("Revenue"), labels=True, mark_color=GREEN),
+        cols=dim("Distance Band"), rows=calc("Calculation_revm"), color=dim("Distance Band"), labels=True,
+        accent=ORANGE, extra_filters=[(BAND_OK, member_filter(BAND_OK))]),
 }
+for _k in KPI_BG:
+    SHEETS[_k]["kpi_bg"] = KPI_BG[_k]
 
 
 # --------------------------------------------------------------------------
@@ -449,12 +518,15 @@ def row_zones(y, h, items, gap=0):
 
 def sheet_zone(name, show_title=True):
     title = "" if show_title else " show-title='false'"
+    bg = KPI_BG.get(name, CARD)
+    border = bg if name in KPI_BG else LINE
 
     def fn(x, y, w, h):
         return (f"<zone {box(x, y, w, h)} id='{Ids.next()}' name={q(name)}{title}>"
-                "<zone-style><format attr='border-color' value='#E2E2E2' />"
+                f"<zone-style><format attr='background-color' value='{bg}' />"
+                f"<format attr='border-color' value='{border}' />"
                 "<format attr='border-style' value='solid' /><format attr='border-width' value='1' />"
-                "<format attr='margin' value='4' /></zone-style></zone>")
+                "<format attr='margin' value='5' /><format attr='padding' value='4' /></zone-style></zone>")
     return fn
 
 
@@ -462,25 +534,28 @@ def param_zone(pname):
     def fn(x, y, w, h):
         return (f"<zone {box(x, y, w, h)} id='{Ids.next()}' mode='compact' "
                 f"param='{pref(pname)}' type-v2='paramctrl'>"
-                "<zone-style><format attr='margin' value='6' /></zone-style></zone>")
+                f"<zone-style><format attr='background-color' value='{CTRL_BG}' />"
+                "<format attr='margin' value='5' /><format attr='padding' value='4' /></zone-style></zone>")
     return fn
 
 
 def text_zone(x, y, w, h, title, subtitle):
+    head, _, rest = title.partition(" - ")
     return (
         f"<zone {box(x, y, w, h)} id='{Ids.next()}' type-v2='text'>"
         "<formatted-text>"
-        f"<run bold='true' fontcolor='#FFFFFF' fontsize='20'>{escape(title)}</run>"
+        f"<run bold='true' fontcolor='{FG}' fontsize='20'>{escape(head)}</run>"
+        f"<run bold='true' fontcolor='{TEAL}' fontsize='20'>{escape('  ' + rest if rest else '')}</run>"
         "<run>Æ&#10;</run>"
-        f"<run fontcolor='#BBBBBB' fontsize='10'>{escape(subtitle)}</run>"
+        f"<run fontcolor='{MUTED}' fontsize='11'>{escape(subtitle)}</run>"
         "</formatted-text>"
-        "<zone-style><format attr='background-color' value='#000000' />"
-        "<format attr='padding' value='10' /></zone-style></zone>"
+        f"<zone-style><format attr='background-color' value='{NAVY}' />"
+        "<format attr='padding' value='12' /></zone-style></zone>"
     )
 
 
 def dashboard(name, subtitle, kpis, row1, row2):
-    header_h, ctrl_h, kpi_h = 70, 50, 95
+    header_h, ctrl_h, kpi_h = 86, 54, 100
     chart_h = (H - header_h - ctrl_h - kpi_h) // 2
     y1 = header_h + ctrl_h + kpi_h
     zones = (
@@ -492,35 +567,33 @@ def dashboard(name, subtitle, kpis, row1, row2):
     )
     return f"""
     <dashboard name={q(name)}>
-      <style />
-      <size maxheight='{H}' maxwidth='{W}' minheight='{H}' minwidth='{W}' />
+      <style><style-rule element='table'><format attr='background-color' value='{NAVY}' /></style-rule><style-rule element='parameter-ctrl-title'><format attr='font-size' value='14' /><format attr='font-weight' value='bold' /><format attr='color' value='{INK}' /></style-rule><style-rule element='parameter-ctrl'><format attr='font-size' value='14' /><format attr='color' value='{INK}' /></style-rule></style>
+      <size sizing-mode='automatic' />
       <datasources>
         <datasource caption={q(DS_CAPTION)} name='{DS}' />
         <datasource name='Parameters' />
       </datasources>
       <zones>
-        <zone h='100000' id='{Ids.next()}' type-v2='layout-basic' w='100000' x='0' y='0'>{zones}</zone>
+        <zone h='100000' id='{Ids.next()}' type-v2='layout-basic' w='100000' x='0' y='0'>{zones}<zone-style><format attr='background-color' value='{NAVY}' /></zone-style></zone>
       </zones>
     </dashboard>"""
 
 
 D1 = "Uber NCR 2024 - Ride Overview"
-D2 = "Uber NCR 2024 - Cancellations & Operations"
+D2 = "Uber NCR 2024 - Cancellations & Ops"
 SUB = "150,000 bookings across Delhi-NCR | Use the dropdowns to filter every chart | Click a bar to cross-filter"
 
 DASHBOARDS = [
     (D1, dashboard(
         D1, SUB,
-        ["Total Bookings", "Completed Rides", "Completion Rate", "Revenue", "Avg Fare",
-         "Avg Ride Distance (km)"],
+        KPI1,
         [(60, "Monthly Trend (Selected Metric)"), (40, "Booking Status Mix")],
         [(30, "Selected Metric by Vehicle Type"), (40, "Demand Heatmap (Weekday x Hour)"),
          (30, "Top 10 Pickup Locations")],
     ), ["Booking Status Mix", "Selected Metric by Vehicle Type", "Monthly Trend (Selected Metric)"]),
     (D2, dashboard(
         D2, SUB,
-        ["Cancellation Rate", "Driver Cancel Rate", "Customer Cancel Rate", "No Driver Found Rate",
-         "Avg Pickup ETA (min)", "Avg Driver Rating"],
+        KPI2,
         [(55, "Why Rides Fail"), (45, "Booking Outcome by Time Slot")],
         [(33, "Revenue by Payment Method"), (34, "Avg Driver Rating by Vehicle"),
          (33, "Revenue by Distance Band")],
@@ -589,10 +662,15 @@ def datasource(directory: str, hyper_path: str) -> str:
     )
     ds_cols = "".join(column_xml(c) for c in SOURCE)
     calc_cols = "".join(column_xml(c) for c in CALCS)
-    color_map = "".join(
-        f"<map to='{hexv}'><bucket>{escape(tstr(k))}</bucket></map>"
-        for k, hexv in STATUS_COLORS.items()
-    )
+    def cmap(colors):
+        return "".join(f"<map to='{hexv}'><bucket>{escape(tstr(k))}</bucket></map>"
+                       for k, hexv in colors.items())
+    palettes = [("Booking Status", STATUS_COLORS), ("Vehicle Type", VEHICLE_COLORS),
+                ("Payment Method", PAYMENT_COLORS), ("Distance Band", BAND_COLORS)]
+    pal_insts = "".join(dim(f).xml for f, _ in palettes)
+    pal_rules = "".join(
+        f"<encoding attr='color' field='{dim(f).name}' type='palette'>{cmap(c)}</encoding>"
+        for f, c in palettes)
     return f"""
     <datasource caption={q(DS_CAPTION)} inline='true' name='{DS}' version='18.1'>
       <connection class='federated'>
@@ -608,13 +686,11 @@ def datasource(directory: str, hyper_path: str) -> str:
       <aliases enabled='yes' />
       {ds_cols}
       {calc_cols}
-      {dim("Booking Status").xml}
+      {pal_insts}
       {extract_xml(hyper_path)}
       <layout dim-ordering='alphabetic' dim-percentage='0.5' measure-ordering='alphabetic' measure-percentage='0.4' show-structure='true' />
       <style>
-        <style-rule element='mark'>
-          <encoding attr='color' field='[none:Booking Status:nk]' type='palette'>{color_map}</encoding>
-        </style-rule>
+        <style-rule element='mark'>{pal_rules}</style-rule>
       </style>
     </datasource>"""
 

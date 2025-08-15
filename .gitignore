@@ -11,3 +11,8 @@ __pycache__/
 *.pyc
 .venv/
 .vscode/
+
+# Local logs and manual backups
+hyperd.log
+*.log
+tableau/backup_*/
